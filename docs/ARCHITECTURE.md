@@ -31,19 +31,31 @@ made and documented here rather than left implicit:
    reserved and unfilled rather than being handed to General category students.
    However, the reverse is allowed: a reserved-category student may take a
    **General** seat if their own category's quota is full but General seats
-   remain (mirrors real-world admission counselling practice).
+   remain (mirrors real-world admission counselling practice). This is a pure
+   seat-availability check — there is no separate marks-based "General cutoff"
+   calculated or enforced; a reserved-category student's marks are only used
+   for ranking against other applicants, not compared against a threshold.
 2. **A student can only be allocated one course** — enforced at the database
    level via a `UNIQUE` constraint on `allocations.student_id`.
-3. **AI-generated SQL is restricted to read-only SELECT statements** for both
+3. **Allocation is a repeatable batch process, not a one-time irreversible
+   event.** The admin can click "Run Allocation" at any time — including after
+   new students have been registered — and each run **fully recomputes** the
+   result from all current data (all existing allocations are cleared and
+   reseated from scratch, ordered by marks/application-date across the
+   complete applicant pool at that moment). A previously allocated student
+   can be displaced by a stronger later applicant on a subsequent run — this
+   mirrors real batch counselling systems (e.g. JEE/NEET-style rounds).
+4. **AI-generated SQL is restricted to read-only SELECT statements** for both
    tasks — this was treated as non-negotiable for security, not left as an
    open question (see Security section).
-4. **Submission format:** code lives in a GitHub-ready repo structure; this
-   document set (README, API docs, architecture doc) serves as the "document
-   containing your work" for upload, alongside the repo link.
-5. **Dataset size for Task 2 demo:** kept small (~20 rows) for the sample
+5. **Submission format:** code lives in a GitHub-ready repo structure; this
+   document set (README, API docs, architecture doc, database schema doc)
+   serves as the "document containing your work" for upload, alongside the
+   repo link and live deployment URLs.
+6. **Dataset size for Task 2 demo:** kept small (~20 rows) for the sample
    dataset, but the ingestion pipeline (batched inserts, dynamic typing) is
    written to scale to much larger files without code changes.
-6. **A single uploaded file = a single flat table.** Multi-sheet Excel files
+7. **A single uploaded file = a single flat table.** Multi-sheet Excel files
    use only the first sheet — multi-table relational uploads were considered
    out of scope for "upload a dataset and query it."
 
@@ -57,7 +69,7 @@ made and documented here rather than left implicit:
   changes if categories are added later and makes seat-tracking queries simple
   joins rather than column-by-column logic.
 - `student_preferences` stores one row per (student, priority) rather than
-  three fixed columns (`pref1, pref2, pref3`) — same reasoning: variable-length
+  fixed columns (`pref1, pref2, pref3`) — same reasoning: variable-length
   preference lists without schema changes.
 - **Task 2** cannot use a fixed schema at all, since the whole point is
   arbitrary uploaded data. Instead, `datasets` + `dataset_columns` store
@@ -66,7 +78,11 @@ made and documented here rather than left implicit:
   queryable/joinable while letting actual data tables have arbitrary shapes.
 - `query_history` in Task 2 logs every question asked, the SQL Gemini generated,
   whether it passed validation, and whether execution succeeded — this doubles
-  as an audit trail and a debugging tool during development.
+  as an audit trail and a debugging tool during development. See the Database
+  Schema Document for a note on why this table currently scopes to Task 2 only.
+
+Full column-level detail for every table is in the separate **Database Schema
+Document**, which reflects `database/schema.sql` exactly.
 
 ---
 
@@ -111,65 +127,83 @@ received the most deliberate design attention:
   known allocation tables. The AI cannot query `pg_catalog`, other datasets'
   tables, or anything outside its assigned scope.
 - **Every generated query is logged** (`query_history`) with a validity flag,
-  so any bypass attempt or repeated failure pattern is auditable after the fact.
+  so any bypass attempt or repeated failure pattern is auditable after the fact
+  (Task 2 only — see Section 3 note).
 - **Rate limiting** (60 req/min per client) on all `/api` routes, mainly to
   control cost and abuse of the AI-calling endpoints.
-- **Production Roadmap (Defense-in-Depth):** While the application layer 
-    fully guarantees safety via string parsing and regex validation, 
-    a production-grade environment would ideally execute these queries 
-    using a dedicated PostgreSQL role restricted strictly to `SELECT` privileges.
+- **Production Roadmap (Defense-in-Depth):** the application layer currently
+  guarantees safety entirely through string parsing and regex validation. A
+  production-grade environment would additionally execute these queries using
+  a dedicated PostgreSQL role restricted strictly to `SELECT` privileges, so
+  that even a validation-layer bypass could not mutate data.
 
 ---
 
 ## 6. Challenges Faced & Solutions
 
-1. **Dynamic table creation with unpredictable input.** CSV/Excel column names 
-     can contain spaces, symbols, or start with digits — none of which are valid 
-     Postgres identifiers. Solved with a `sanitizeColumnName()` function that 
-     normalizes names and de-duplicates collisions (e.g. two columns both 
-     sanitizing to `date` become `date` and `date_1`).
-2. **Type inference from loosely-typed spreadsheet data.** CSV values are all 
-     strings by default. Built a sampling-based type inferrer (`inferColumnType`) 
-     that checks the first 200 non-null values against integer/numeric/boolean/
-     date patterns before falling back to TEXT, balancing accuracy against not 
-     scanning entire large files just to create a table.
-3. **Preventing AI SQL injection / unsafe queries.** Addressed via the layered 
-     validation approach described in the Security section above — this was the 
-     single most important design problem in the whole assessment given both 
-     tasks fundamentally hand a natural-language input to an LLM that then 
-     produces SQL to execute.
-4. **Handling LLM Rate Limits & Server Crashes (Critical Bug Fixed):** During 
-     heavy testing of the AI Assistant, the Gemini API threw a `429 Too Many 
-     Requests` quota error. This initially triggered an unhandled promise rejection, 
-     causing the Node.js event loop to panic and crash the backend server 
-     (`uv_handle_closing` error).
-   - *Solution:* Refactored the AI query services with rigorous inner `try-catch` 
-      blocks, mapping LLM failures into clean user-friendly HTTP errors 
-(`429 Rate Limit`), and hooked them into the Express global error-handling 
-      middleware to make the backend completely resilient and crash-proof.
-5. **Allocation algorithm correctness with reservation edge cases.** Needed a clear, 
-     documented rule for what happens when a reserved-category quota is full but the 
-     course still has open General seats. Resolved by implementing real-world 
-     admission counseling logic: reserved students can claim General seats if their 
-     marks clear the General cutoff.
-6. **Idempotent allocation runs.** Since "Run Allocation" can be clicked 
-     multiple times as data changes, `runAllocation()` resets all previous 
-     allocations and filled-seat counters at the start of each run inside a 
-     single atomic transaction, avoiding double-counting or stale results.
+1. **Dynamic table creation with unpredictable input.** CSV/Excel column names
+   can contain spaces, symbols, or start with digits — none of which are valid
+   Postgres identifiers. Solved with a `sanitizeColumnName()` function that
+   normalizes names and de-duplicates collisions (e.g. two columns both
+   sanitizing to `date` become `date` and `date_1`).
+2. **Type inference from loosely-typed spreadsheet data.** CSV values are all
+   strings by default. Built a sampling-based type inferrer (`inferColumnType`)
+   that checks the first 200 non-null values against integer/numeric/boolean/
+   date patterns before falling back to TEXT, balancing accuracy against not
+   scanning entire large files just to create a table.
+3. **Preventing AI SQL injection / unsafe queries.** Addressed via the layered
+   validation approach described in the Security section above — this was the
+   single most important design problem in the whole assessment, given both
+   tasks fundamentally hand a natural-language input to an LLM that then
+   produces SQL to execute.
+4. **Handling LLM rate limits without crashing the server.** During testing,
+   the Gemini API occasionally returned a `429 Too Many Requests` quota error.
+   Left unhandled, this surfaced as an uncaught rejection.
+   *Solution:* wrapped the Gemini call in both `aiSqlService.js` and
+   `allocationAiAssistant.js` with a try/catch that detects 429/quota-related
+   errors specifically and re-throws them as a tagged `isQuotaError` error,
+   which the controllers and the global error handler map to a clean `429`
+   HTTP response instead of a server crash.
+5. **Allocation algorithm correctness with reservation edge cases.** Needed a
+   clear, documented rule for what happens when a reserved-category quota is
+   full but the course still has open General seats (or vice versa). Resolved
+   by documenting the rule explicitly as an assumption (Section 2, point 1)
+   since no clarification was available, and implementing it precisely as
+   stated — a pure seat-availability check, not a marks-cutoff comparison —
+   so the logic is auditable against that written rule.
+6. **Idempotent allocation runs.** Since "Run Allocation" can be clicked
+   multiple times as data changes, `runAllocation()` resets all previous
+   allocations and filled-seat counters at the start of each run inside a
+   single transaction, avoiding double-counting or stale results. This is the
+   deliberate full-recompute design documented in Section 2, point 3.
 
 ---
 
 ## 7. What Was Deliberately Left Out of Scope
 
-- **Authentication & Authorization:** (Not requested in the core assessment brief; left out to focus strictly on database correctness and AI implementation within the timeline).
-- **Multi-sheet Excel Ingestion:** Multi-table relational uploads were considered out of scope for a generic single-dataset query tool; hence, only the first sheet of an uploaded workbook is parsed.
+- **Authentication & Authorization:** not requested in the core assessment
+  brief; left out to focus on database correctness and AI implementation
+  within the timeline.
+- **Multi-sheet Excel ingestion, multi-table relational uploads:** considered
+  out of scope for a generic single-dataset query tool; only the first sheet
+  of an uploaded workbook is parsed.
+- **Task 1 AI Assistant query logging:** answers are computed live but not
+  written to `query_history` (that table is currently scoped to Task 2
+  datasets only — see Database Schema Document).
 
 ---
 
-## 8. Deployment & Live URLs (Bonus Advantage)
+## 8. Deployment & Live URLs
 
-Though listed as optional in the evaluation brief, the entire pipeline has been fully deployed to cloud infrastructure to demonstrate production readiness:
-- **Backend Service:** Live on **Render** (Node.js/Express + Hosted PostgreSQL)
-- **Frontend Application:** Live on **Vercel** (React/Vite SPA)
-- **Database Schema Execution:** Automated and verified directly against the live remote instance.
-      
+The full pipeline is deployed to cloud infrastructure (optional in the
+evaluation brief, included here as an advantage):
+
+- **Backend (API):** https://harvee-fullstack-assessment.onrender.com
+- **Frontend (App):** https://harvee-fullstack-assessment.vercel.app
+- **Database:** Render-hosted PostgreSQL, schema applied via `database/schema.sql`
+  against the live instance.
+
+**Note on Render's free tier:** the backend sleeps after ~15 minutes of
+inactivity. The first request after a period of idle time can take 30–50
+seconds while the instance wakes up — this is expected free-tier behavior,
+not an application bug.

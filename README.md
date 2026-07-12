@@ -7,6 +7,16 @@ This repository contains both required tasks:
 - **Task 1:** AI-Powered Student Course Allocation System
 - **Task 2:** AI SQL Assistant (Natural Language to SQL over uploaded datasets)
 
+## Live Deployment
+
+- **Frontend (App):** https://harvee-fullstack-assessment.vercel.app/
+- **Backend (API):** https://harvee-fullstack-assessment.onrender.com
+- **Health Check:** https://harvee-fullstack-assessment.onrender.com/health
+
+**Note:** the backend runs on Render's free tier, which sleeps after ~15 minutes
+of inactivity. The first request after idle time can take 30–50 seconds while
+it wakes up — this is expected free-tier behavior, not an application bug.
+
 ---
 
 ## 1. Prerequisites
@@ -28,6 +38,8 @@ This repository contains both required tasks:
    psql -U postgres -d harvee_assessment -f database/schema.sql
    ```
 
+See `docs/DATABASE_SCHEMA_DOCUMENT.md` for the full table-by-table design.
+
 ---
 
 ## 3. Backend Setup
@@ -46,6 +58,7 @@ DB_NAME=harvee_assessment
 DB_USER=postgres
 DB_PASSWORD=your_actual_password
 GEMINI_API_KEY=your_actual_gemini_api_key
+GEMINI_MODEL=gemini-flash-latest
 ```
 
 Start the backend:
@@ -79,8 +92,6 @@ npm run dev
 
 Frontend runs at: `http://localhost:5173` and proxies `/api` calls to the backend
 at `http://localhost:5000` (configured in `vite.config.js`).
-
-Live URL : `https://harvee-fullstack-assessment.vercel.app/`
 
 Open `http://localhost:5173` in your browser. You'll see 4 tabs:
 1. **Task 1: Courses** — add courses with category-wise reserved seats
@@ -128,8 +139,9 @@ harvee-assessment/
 │   └── sample_datasets/sample_sales.csv
 ├── docs/
 │   ├── API_DOCUMENTATION.md
-│   └── ARCHITECTURE.md      # Design decisions, assumptions, security notes, challenges
-└── README.md                 (this file)
+│   ├── ARCHITECTURE.md              # Design decisions, assumptions, security notes, challenges
+│   └── DATABASE_SCHEMA_DOCUMENT.md  # Table-by-table schema reference
+└── README.md                         (this file)
 ```
 
 ---
