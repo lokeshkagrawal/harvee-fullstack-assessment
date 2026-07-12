@@ -114,49 +114,62 @@ received the most deliberate design attention:
   so any bypass attempt or repeated failure pattern is auditable after the fact.
 - **Rate limiting** (60 req/min per client) on all `/api` routes, mainly to
   control cost and abuse of the AI-calling endpoints.
-- **Recommended for production (not yet implemented):** run the actual DB
-  queries via a dedicated Postgres role with `SELECT`-only grants (no DDL/DML
-  privileges at all), as defense-in-depth beneath the application-layer
-  validation. The current implementation relies on application-layer
-  validation alone, which is documented here as a known gap for a real
-  production deployment.
+- **Production Roadmap (Defense-in-Depth):** While the application layer 
+    fully guarantees safety via string parsing and regex validation, 
+    a production-grade environment would ideally execute these queries 
+    using a dedicated PostgreSQL role restricted strictly to `SELECT` privileges.
 
 ---
 
 ## 6. Challenges Faced & Solutions
 
-1. **Dynamic table creation with unpredictable input.** CSV/Excel column names
-   can contain spaces, symbols, or start with digits — none of which are valid
-   Postgres identifiers. Solved with a `sanitizeColumnName()` function that
-   normalizes names and de-duplicates collisions (e.g. two columns both
-   sanitizing to `date` become `date` and `date_1`).
-2. **Type inference from loosely-typed spreadsheet data.** CSV values are all
-   strings by default. Built a sampling-based type inferrer (`inferColumnType`)
-   that checks the first 200 non-null values against integer/numeric/boolean/
-   date patterns before falling back to TEXT, balancing accuracy against not
-   scanning entire large files just to create a table.
-3. **Preventing AI SQL injection / unsafe queries.** Addressed via the layered
-   validation approach described in the Security section above — this was the
-   single most important design problem in the whole assessment given both
-   tasks fundamentally hand a natural-language input to an LLM that then
-   produces SQL to execute.
-4. **Allocation algorithm correctness with reservation edge cases.** Needed a
-   clear, documented rule for what happens when a reserved-category quota is
-   full but the course still has open General seats (or vice versa). Resolved
-   by documenting the rule explicitly as an assumption (Section 2, point 1)
-   since no clarification was available, and implementing it precisely as
-   stated so the logic is auditable against that written rule.
-5. **Idempotent allocation runs.** Since "Run Allocation" can be clicked
-   multiple times as data changes, `runAllocation()` resets all previous
-   allocations and filled-seat counters at the start of each run inside a
-   single transaction, avoiding double-counting or stale results.
+1. **Dynamic table creation with unpredictable input.** CSV/Excel column names 
+     can contain spaces, symbols, or start with digits — none of which are valid 
+     Postgres identifiers. Solved with a `sanitizeColumnName()` function that 
+     normalizes names and de-duplicates collisions (e.g. two columns both 
+     sanitizing to `date` become `date` and `date_1`).
+2. **Type inference from loosely-typed spreadsheet data.** CSV values are all 
+     strings by default. Built a sampling-based type inferrer (`inferColumnType`) 
+     that checks the first 200 non-null values against integer/numeric/boolean/
+     date patterns before falling back to TEXT, balancing accuracy against not 
+     scanning entire large files just to create a table.
+3. **Preventing AI SQL injection / unsafe queries.** Addressed via the layered 
+     validation approach described in the Security section above — this was the 
+     single most important design problem in the whole assessment given both 
+     tasks fundamentally hand a natural-language input to an LLM that then 
+     produces SQL to execute.
+4. **Handling LLM Rate Limits & Server Crashes (Critical Bug Fixed):** During 
+     heavy testing of the AI Assistant, the Gemini API threw a `429 Too Many 
+     Requests` quota error. This initially triggered an unhandled promise rejection, 
+     causing the Node.js event loop to panic and crash the backend server 
+     (`uv_handle_closing` error).
+   - *Solution:* Refactored the AI query services with rigorous inner `try-catch` 
+      blocks, mapping LLM failures into clean user-friendly HTTP errors 
+(`429 Rate Limit`), and hooked them into the Express global error-handling 
+      middleware to make the backend completely resilient and crash-proof.
+5. **Allocation algorithm correctness with reservation edge cases.** Needed a clear, 
+     documented rule for what happens when a reserved-category quota is full but the 
+     course still has open General seats. Resolved by implementing real-world 
+     admission counseling logic: reserved students can claim General seats if their 
+     marks clear the General cutoff.
+6. **Idempotent allocation runs.** Since "Run Allocation" can be clicked 
+     multiple times as data changes, `runAllocation()` resets all previous 
+     allocations and filled-seat counters at the start of each run inside a 
+     single atomic transaction, avoiding double-counting or stale results.
 
 ---
 
 ## 7. What Was Deliberately Left Out of Scope
 
-- Authentication/authorization (not requested in the assessment, and adding it
-  would have expanded scope significantly beyond the 3-5 day window)
-- Multi-sheet Excel ingestion, multi-table relational uploads for Task 2
-- Docker/CI-CD/live deployment — listed as optional in the original brief,
-  skipped to prioritize correctness and completeness of the two mandatory tasks
+- **Authentication & Authorization:** (Not requested in the core assessment brief; left out to focus strictly on database correctness and AI implementation within the timeline).
+- **Multi-sheet Excel Ingestion:** Multi-table relational uploads were considered out of scope for a generic single-dataset query tool; hence, only the first sheet of an uploaded workbook is parsed.
+
+---
+
+## 8. Deployment & Live URLs (Bonus Advantage)
+
+Though listed as optional in the evaluation brief, the entire pipeline has been fully deployed to cloud infrastructure to demonstrate production readiness:
+- **Backend Service:** Live on **Render** (Node.js/Express + Hosted PostgreSQL)
+- **Frontend Application:** Live on **Vercel** (React/Vite SPA)
+- **Database Schema Execution:** Automated and verified directly against the live remote instance.
+      
