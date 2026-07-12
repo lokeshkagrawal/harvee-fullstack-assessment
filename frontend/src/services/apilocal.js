@@ -1,7 +1,4 @@
-// FIXED: Dynamic BASE URL detection for local development vs live Vercel production
-const BASE = import.meta.env.PROD 
-  ? 'https://harvee-fullstack-assessment.onrender.com/api' // Your live Render backend URL
-  : '/api'; // Fallback for local Vite proxy development
+const BASE = '/api';
 
 // Maps technical/backend error text into a message a non-technical user can
 // understand, without hiding the real problem from developers (it's still
