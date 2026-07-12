@@ -80,6 +80,8 @@ npm run dev
 Frontend runs at: `http://localhost:5173` and proxies `/api` calls to the backend
 at `http://localhost:5000` (configured in `vite.config.js`).
 
+Live URL : `https://harvee-fullstack-assessment.vercel.app/`
+
 Open `http://localhost:5173` in your browser. You'll see 4 tabs:
 1. **Task 1: Courses** — add courses with category-wise reserved seats
 2. **Task 1: Students** — register students with marks, category, preferences
